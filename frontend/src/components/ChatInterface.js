@@ -53,67 +53,106 @@ const SuggestedQuestionCard = React.memo(({ question, onClick }) => (
   <Card 
     sx={{ 
       cursor: 'pointer',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
       border: '1px solid #e2e8f0',
       background: 'linear-gradient(135deg, #ffffff 0%, #fefefe 100%)',
+      position: 'relative',
+      overflow: 'hidden',
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        left: '-100%',
+        width: '100%',
+        height: '100%',
+        background: `linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.05), transparent)`,
+        transition: 'left 0.6s ease',
+      },
       '&:hover': { 
-        transform: 'translateY(-4px) scale(1.02)', 
-        boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
-        borderColor: `${question.color}.300`,
+        transform: 'translateY(-6px) scale(1.03)', 
+        boxShadow: '0 25px 50px -12px rgba(37, 99, 235, 0.25)',
+        borderColor: '#2563eb',
+        '&::before': {
+          left: '100%',
+        },
         '& .question-icon': {
-          transform: 'scale(1.1)',
-          boxShadow: `0 8px 16px -4px rgb(37 99 235 / 0.3)`
+          transform: 'scale(1.15) rotate(5deg)',
+          boxShadow: `0 12px 24px -6px rgba(37, 99, 235, 0.4)`
+        },
+        '& .question-text': {
+          color: '#2563eb',
+        },
+        '& .question-chip': {
+          backgroundColor: '#dbeafe',
+          borderColor: '#2563eb',
+          color: '#1d4ed8',
         }
       },
       '&:active': {
-        transform: 'translateY(-2px) scale(1.01)',
-      }
+        transform: 'translateY(-3px) scale(1.01)',
+      },
+      animation: 'fadeInScale 0.6s ease-out',
     }}
     onClick={() => onClick(question.text)}
   >
-    <CardContent sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+    <CardContent sx={{ p: 3.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
         <Box 
           className="question-icon"
           sx={{ 
-            width: 44, 
-            height: 44,
-            borderRadius: 2,
-            background: `linear-gradient(135deg, ${question.color}.main 0%, ${question.color}.dark 100%)`,
+            width: 48, 
+            height: 48,
+            borderRadius: 3,
+            background: `linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            boxShadow: `0 4px 6px -1px rgb(37 99 235 / 0.2)`
+            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: `0 8px 16px -4px rgba(37, 99, 235, 0.3)`,
+            position: 'relative',
+            '&::after': {
+              content: '""',
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 3,
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)',
+            }
           }}
         >
           {React.cloneElement(question.icon, { 
             fontSize: 'medium', 
-            sx: { color: 'white' }
+            sx: { color: 'white', zIndex: 1, position: 'relative' }
           })}
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="body1" sx={{ 
-            fontWeight: 600, 
-            mb: 1.5,
-            lineHeight: 1.4,
-            color: 'text.primary'
-          }}>
+          <Typography 
+            className="question-text"
+            variant="body1" 
+            sx={{ 
+              fontWeight: 600, 
+              mb: 2,
+              lineHeight: 1.4,
+              color: 'text.primary',
+              transition: 'color 0.3s ease'
+            }}
+          >
             {question.text}
           </Typography>
           <Chip 
+            className="question-chip"
             label={question.category} 
             size="small" 
             sx={{
-              backgroundColor: `${question.color}.50`,
-              color: `${question.color}.700`,
+              backgroundColor: '#f1f5f9',
+              color: '#475569',
               fontWeight: 600,
               fontSize: '0.75rem',
-              height: 24,
-              border: `1px solid ${question.color}.200`,
+              height: 28,
+              border: `1px solid #e2e8f0`,
+              transition: 'all 0.3s ease',
               '& .MuiChip-label': {
-                px: 1.5
+                px: 2
               }
             }}
           />
@@ -468,8 +507,8 @@ const ChatInterface = ({ documentReady }) => {
         <Slide direction="down" in={true} mountOnEnter unmountOnExit>
           <Paper elevation={0} sx={{ 
             m: 3, 
-            p: 3, 
-            borderRadius: 4,
+            p: 4, 
+            borderRadius: 6,
             flexShrink: 0,
             background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
             border: '1px solid #e2e8f0',
@@ -482,52 +521,68 @@ const ChatInterface = ({ documentReady }) => {
               left: 0,
               right: 0,
               bottom: 0,
-              background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.02) 0%, rgba(124, 58, 237, 0.02) 100%)',
+              background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.03) 0%, rgba(124, 58, 237, 0.03) 100%)',
+              animation: 'shimmer 3s ease-in-out infinite',
             }
           }}>
             <Box sx={{ position: 'relative', zIndex: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 4 }}>
                 <Box sx={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 2,
+                  width: 56,
+                  height: 56,
+                  borderRadius: 3,
                   background: 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 4px 6px -1px rgb(37 99 235 / 0.3)'
+                  boxShadow: '0 8px 16px -4px rgba(37, 99, 235, 0.4)',
+                  position: 'relative',
+                  '&::after': {
+                    content: '""',
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: 3,
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)',
+                  }
                 }}>
-                  <AutoAwesome sx={{ color: 'white', fontSize: 24 }} />
+                  <AutoAwesome sx={{ color: 'white', fontSize: 28, zIndex: 1, position: 'relative' }} />
                 </Box>
                 <Box>
-                  <Typography variant="h5" sx={{ 
-                    fontWeight: 700,
+                  <Typography variant="h4" sx={{ 
+                    fontWeight: 800,
                     background: 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)',
                     backgroundClip: 'text',
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
-                    mb: 0.5
+                    mb: 1,
+                    fontSize: { xs: '1.5rem', sm: '2rem' }
                   }}>
                     Quick Start Questions
                   </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                    Get started with these common clinical protocol questions
+                  <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500, fontSize: '1.1rem' }}>
+                    Get started with these expertly crafted clinical protocol questions
                   </Typography>
                 </Box>
               </Box>
               
               <Box sx={{ 
                 display: 'grid', 
-                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', 
-                gap: 2.5,
+                gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', 
+                gap: 3,
                 pr: 1
               }}>
                 {suggestedQuestions.slice(0, 6).map((question, index) => (
-                  <SuggestedQuestionCard
+                  <Box
                     key={index}
-                    question={question}
-                    onClick={handleSuggestedQuestion}
-                  />
+                    sx={{
+                      animation: `slideInUp 0.6s ease-out ${index * 0.1}s both`,
+                    }}
+                  >
+                    <SuggestedQuestionCard
+                      question={question}
+                      onClick={handleSuggestedQuestion}
+                    />
+                  </Box>
                 ))}
               </Box>
             </Box>
@@ -573,23 +628,46 @@ const ChatInterface = ({ documentReady }) => {
                     <Paper 
                       elevation={message.type === 'user' ? 2 : 3}
                       sx={{ 
-                        p: 2, 
+                        p: 3, 
                         background: message.type === 'user' 
-                          ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                          : 'white',
+                          ? 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)'
+                          : 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
                         color: message.type === 'user' ? 'white' : 'text.primary',
-                        borderRadius: 3,
+                        borderRadius: 4,
                         position: 'relative',
+                        border: message.type === 'assistant' ? '1px solid #e2e8f0' : 'none',
+                        boxShadow: message.type === 'user' 
+                          ? '0 8px 25px -8px rgba(37, 99, 235, 0.4)'
+                          : '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
+                        transition: 'all 0.3s ease',
+                        '&:hover': {
+                          transform: 'translateY(-2px)',
+                          boxShadow: message.type === 'user' 
+                            ? '0 12px 30px -8px rgba(37, 99, 235, 0.5)'
+                            : '0 8px 25px -8px rgb(0 0 0 / 0.15)',
+                        },
                         '&::before': message.type === 'assistant' ? {
                           content: '""',
                           position: 'absolute',
-                          top: -8,
-                          left: 20,
+                          top: -10,
+                          left: 24,
                           width: 0,
                           height: 0,
-                          borderLeft: '8px solid transparent',
-                          borderRight: '8px solid transparent',
-                          borderBottom: '8px solid white',
+                          borderLeft: '10px solid transparent',
+                          borderRight: '10px solid transparent',
+                          borderBottom: '10px solid #ffffff',
+                          filter: 'drop-shadow(0 -2px 2px rgba(0,0,0,0.1))',
+                        } : {},
+                        '&::after': message.type === 'user' ? {
+                          content: '""',
+                          position: 'absolute',
+                          top: -10,
+                          right: 24,
+                          width: 0,
+                          height: 0,
+                          borderLeft: '10px solid transparent',
+                          borderRight: '10px solid transparent',
+                          borderBottom: '10px solid #2563eb',
                         } : {}
                       }}
                     >
@@ -670,15 +748,22 @@ const ChatInterface = ({ documentReady }) => {
                     
                     {/* Enhanced Action Buttons */}
                     {message.type === 'assistant' && !message.error && (
-                      <Box sx={{ display: 'flex', gap: 1, mt: 2, justifyContent: 'flex-end' }}>
+                      <Box sx={{ display: 'flex', gap: 1.5, mt: 3, justifyContent: 'flex-end' }}>
                         <Tooltip title={feedbackStatus[message.id]?.copied ? "Copied!" : "Copy response"}>
                           <IconButton 
                             size="small" 
                             onClick={() => copyToClipboard(message.content, message)}
                             sx={{
-                              bgcolor: feedbackStatus[message.id]?.copied ? 'success.light' : 'grey.100',
+                              bgcolor: feedbackStatus[message.id]?.copied ? 'success.light' : 'rgba(255,255,255,0.8)',
                               color: feedbackStatus[message.id]?.copied ? 'success.dark' : 'text.secondary',
-                              '&:hover': { bgcolor: feedbackStatus[message.id]?.copied ? 'success.light' : 'grey.200' }
+                              backdropFilter: 'blur(10px)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': { 
+                                bgcolor: feedbackStatus[message.id]?.copied ? 'success.light' : 'rgba(255,255,255,0.9)',
+                                transform: 'scale(1.1)',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                              }
                             }}
                           >
                             <ContentCopy fontSize="small" />
@@ -689,9 +774,16 @@ const ChatInterface = ({ documentReady }) => {
                             size="small"
                             onClick={() => handleReaction(message, 'like')}
                             sx={{
-                              bgcolor: feedbackStatus[message.id]?.like ? 'success.light' : 'grey.100',
+                              bgcolor: feedbackStatus[message.id]?.like ? 'success.light' : 'rgba(255,255,255,0.8)',
                               color: feedbackStatus[message.id]?.like ? 'success.dark' : 'text.secondary',
-                              '&:hover': { bgcolor: feedbackStatus[message.id]?.like ? 'success.light' : 'grey.200' }
+                              backdropFilter: 'blur(10px)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': { 
+                                bgcolor: feedbackStatus[message.id]?.like ? 'success.light' : 'rgba(255,255,255,0.9)',
+                                transform: 'scale(1.1)',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                              }
                             }}
                           >
                             <ThumbUp fontSize="small" />
@@ -702,9 +794,16 @@ const ChatInterface = ({ documentReady }) => {
                             size="small"
                             onClick={() => handleReaction(message, 'dislike')}
                             sx={{
-                              bgcolor: feedbackStatus[message.id]?.dislike ? 'error.light' : 'grey.100',
+                              bgcolor: feedbackStatus[message.id]?.dislike ? 'error.light' : 'rgba(255,255,255,0.8)',
                               color: feedbackStatus[message.id]?.dislike ? 'error.dark' : 'text.secondary',
-                              '&:hover': { bgcolor: feedbackStatus[message.id]?.dislike ? 'error.light' : 'grey.200' }
+                              backdropFilter: 'blur(10px)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': { 
+                                bgcolor: feedbackStatus[message.id]?.dislike ? 'error.light' : 'rgba(255,255,255,0.9)',
+                                transform: 'scale(1.1)',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                              }
                             }}
                           >
                             <ThumbDown fontSize="small" />

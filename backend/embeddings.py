@@ -13,9 +13,11 @@ def get_embedding(text: str):
         if not text or not text.strip():
             raise Exception("Empty text provided for embedding")
             
+        prompt_text = f"search_query: {text.strip()}"
+
         payload = {
             "model": EMBED_MODEL,
-            "prompt": text.strip()  # Changed from "input" to "prompt"
+            "prompt": prompt_text 
         }
 
         print(f"Getting embedding from Ollama at {OLLAMA_URL}")

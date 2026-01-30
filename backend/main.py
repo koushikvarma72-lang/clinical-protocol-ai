@@ -4,7 +4,6 @@ from pdf_loader import load_pdf_text, load_pdf_with_pages
 from text_chunker import chunk_text, chunk_pages_with_metadata
 from embeddings import get_embedding
 from vectordb import get_collection
-
 from pydantic import BaseModel
 from rag_query import answer_question, simple_search
 from new_rag_system import answer_question_new
@@ -17,6 +16,11 @@ import json
 import asyncio
 import uuid
 import time
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+# Create a global executor
+executor = ThreadPoolExecutor(max_workers=10)
 
 app = FastAPI()
 
@@ -954,9 +958,9 @@ async def upload_simple(file: UploadFile = File(...)):
     return await upload_pdf(file)
 
 @app.post("/ask")
-def ask(request: QuestionRequest):
+async def ask(request: QuestionRequest):
     try:
-        result = answer_question_new(request.question)
+        result = await asyncio.to_thread(answer_question_new, request.question)
         
         # Handle both old string format and new evidence format
         if isinstance(result, dict):

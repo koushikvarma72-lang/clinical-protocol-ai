@@ -1,3 +1,4 @@
+import re
 def chunk_text(text, chunk_size=1000, overlap=200):
     chunks = []
 
@@ -40,19 +41,23 @@ def chunk_pages_with_metadata(pages_data, chunk_size=1000, overlap=200):
             
             # Find sentence boundaries to avoid cutting mid-sentence
             if end < text_length:
-                # Look for sentence endings within the last 100 characters
-                last_period = chunk_text.rfind('. ')
-                last_exclamation = chunk_text.rfind('! ')
-                last_question = chunk_text.rfind('? ')
+                # Look for terminal punctuation followed by a space and a Capital Letter
+                # This regex ensures we don't break on "mg." or "Dr."
+                pattern = r'[.!?]\s+(?=[A-Z])'
+                matches = list(re.finditer(pattern, chunk_text))
                 
-                sentence_end = max(last_period, last_exclamation, last_question)
-                if sentence_end > len(chunk_text) - 100:  # If found near the end
-                    end = start + sentence_end + 2
-                    chunk_text = page_text[start:end]
+                if matches:
+                    # last_match.end() points to just after the punctuation/space
+                    sentence_end = matches[-1].end()
+                    
+                    # If valid boundary found in the last 150 chars, snap to it
+                    if sentence_end > len(chunk_text) - 150:
+                        end = start + sentence_end
+                        chunk_text = page_text[start:end]
             
             chunks.append({
                 "id": f"chunk_{chunk_id}",
-                "text": chunk_text.strip(),
+                "text": f"search_document: {chunk_text.strip()}",
                 "page_number": page_num,
                 "start_pos": start,
                 "end_pos": end,

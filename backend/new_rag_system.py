@@ -211,7 +211,7 @@ class DocumentAssistant:
             relevant_sections = []
             for doc, metadata, distance in zip(documents, metadatas, distances):
                 # Calculate relevance score
-                max_distance = 500
+                max_distance = 1.2
                 relevance_score = max(0, (max_distance - distance) / max_distance)
                 
                 # Only include reasonably relevant sections
@@ -252,35 +252,27 @@ class DocumentAssistant:
         return question
     
     def _is_administrative_content(self, text: str) -> bool:
-        """Check if content is administrative/not useful for users"""
-        admin_indicators = [
-            'confidential', 'page', 'of 126', 'protocol incorporating amendment',
-            'study no.', 'march 2017', 'takeda pharmaceutical', 'source document',
-            'drug accountability log', 'regulatory filing', 'correspondence',
-            'written subject authorization', 'informed consent form', 'personal information',
-            'investigator acknowledges', 'consents to the use', 'described above',
-            'amendment no.', 'final', 'version', 'date', 'signature page'
+        text_lower = text.lower()
+        
+        # Check for Table of Contents dot-leaders (e.g., ....... 45)
+        if "........" in text or " . . . " in text:
+            return True
+            
+        # Standard admin keywords
+        admin_terms = [
+            'table of contents', 'list of tables', 'list of figures',
+            'confidential', 'property of', 'version number', 
+            'protocol amendment', 'page code'
         ]
         
-        text_lower = text.lower()
-        admin_count = sum(1 for indicator in admin_indicators if indicator in text_lower)
-        
-        # More aggressive filtering
-        if admin_count >= 1:
+        if any(term in text_lower for term in admin_terms):
             return True
             
-        # Check for document formatting patterns
-        if any(pattern in text_lower for pattern in [
-            'page', 'confidential', 'amendment', 'signature', 'consent form'
-        ]):
-            return True
-            
-        # Check if text is too short or mostly numbers/formatting
-        if len(text.strip()) < 50:
+        # Short header/footer noise (usually < 20 chars and contains page/date)
+        if len(text) < 40 and any(char.isdigit() for char in text) and "/" in text:
             return True
             
         return False
-    
     def _get_llm_answer(self, question: str, sections: List[Dict]) -> Optional[str]:
         """Have LLM read sections and provide human-like answer"""
         try:
@@ -442,7 +434,7 @@ Answer:"""
                     if i == 0:
                         answer += f"{info}."
                     elif i == len(objective_info[:3]) - 1:
-                        answer += f" Additionally, {info.lower()}."
+                        answer += f" Additionally, {self._format_info_sentence(info)}"
                     else:
                         answer += f" The study also aims to {info.lower()}."
             
@@ -491,7 +483,7 @@ Answer:"""
                     if i == 0:
                         answer += f"{info}."
                     elif i == len(key_info) - 1:
-                        answer += f" Additionally, {info.lower()}."
+                        answer += f" Additionally, {self._format_info_sentence(info)}"
                     else:
                         answer += f" Furthermore, {info.lower()}."
             
@@ -538,7 +530,7 @@ Answer:"""
                     if i == 0:
                         answer += f"{info}."
                     elif i == len(safety_info[:3]) - 1:
-                        answer += f" Additionally, {info.lower()}."
+                        answer += f" Additionally, {self._format_info_sentence(info)}"
                     else:
                         answer += f" Furthermore, {info.lower()}."
             
@@ -591,7 +583,7 @@ Answer:"""
                     if i == 0:
                         answer += f"{info}."
                     elif i == len(criteria_info[:4]) - 1:
-                        answer += f" Additionally, {info.lower()}."
+                        answer += f" Additionally, {self._format_info_sentence(info)}"
                     else:
                         answer += f" Also, {info.lower()}."
             
@@ -606,6 +598,20 @@ Answer:"""
             "question": question,
             "method": "intelligent_fallback_criteria"
         }
+    def _format_info_sentence(self, text: str) -> str:
+        """Lowercase the first word only if it's not a multi-letter acronym."""
+        words = text.split()
+        if not words:
+            return text
+        
+        first_word = words[0]
+        # If the first word is all caps (and longer than 1 char), assume it's an acronym like SAE
+        if first_word.isupper() and len(first_word) > 1:
+            return text
+        
+        # Otherwise, lowercase just the first letter of the first word
+        words[0] = first_word[0].lower() + first_word[1:]
+        return " ".join(words)
 
 
 # Global instance
