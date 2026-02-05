@@ -52,8 +52,8 @@ const DocumentUpload = ({ onUploadComplete }) => {
 
       const taskId = response.task_id;
       
-      // Poll for progress
-      const pollProgress = async () => {
+      // Poll for progress with adaptive intervals
+      const pollProgress = async (attempt = 0) => {
         try {
           const progressData = await getUploadProgress(taskId);
           setUploadProgress(progressData);
@@ -72,16 +72,22 @@ const DocumentUpload = ({ onUploadComplete }) => {
             }
             setUploading(false);
           } else {
-            // Continue polling
-            setTimeout(pollProgress, 2000);
+            // Adaptive polling: slower for embedding stage (progress > 60%)
+            const pollInterval = progressData.progress > 60 ? 3000 : 2000;
+            setTimeout(() => pollProgress(attempt + 1), pollInterval);
           }
         } catch (err) {
-          setError('Failed to get upload progress: ' + err.message);
-          setUploading(false);
+          if (attempt < 5) {
+            // Retry on error up to 5 times
+            setTimeout(() => pollProgress(attempt + 1), 2000);
+          } else {
+            setError('Failed to get upload progress: ' + err.message);
+            setUploading(false);
+          }
         }
       };
 
-      // Start polling
+      // Start polling after 1 second delay
       setTimeout(pollProgress, 1000);
       
     } catch (err) {

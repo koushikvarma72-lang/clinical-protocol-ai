@@ -1,0 +1,538 @@
+# ProtocolSummary.js - Line-by-Line Explanation
+
+**File Purpose**: React component that displays the AI-generated executive summary of a clinical protocol. Allows users to download, print, copy, and share the summary.
+
+**Complexity Level**: ⭐⭐ Intermediate (220 lines)
+
+---
+
+## Import Statements (Lines 1-20)
+
+```javascript
+import React, { useState } from 'react';
+import { Box, Typography, Button, Paper, Grid, Card, ... } from '@mui/material';
+import { Download, Share, Print, CheckCircle, ... } from '@mui/icons-material';
+import { submitFeedback } from '../services/api';
+```
+- Imports React and state management
+- Imports Material-UI components for layout
+- Imports icons for action buttons
+- Imports API function to record user feedback
+
+---
+
+## Component Definition (Lines 22-24)
+
+```javascript
+const ProtocolSummary = ({ summary, sections }) => {
+```
+- Receives props:
+  - `summary`: AI-generated executive summary text
+  - `sections`: array of extracted sections with approval status
+
+---
+
+## State Management (Lines 25-31)
+
+```javascript
+const [copied, setCopied] = useState(false);
+```
+- Tracks if text was just copied to clipboard
+- Used to show "Copied!" confirmation
+
+```javascript
+const [userSession] = useState(() => `summary_${Date.now()}_${Math.random()...}`);
+```
+- Creates unique session ID for tracking
+
+```javascript
+const [actionFeedback, setActionFeedback] = useState({});
+```
+- Tracks feedback for download and print actions
+- Shows temporary success messages
+
+---
+
+## Download Summary Function (Lines 33-65)
+
+```javascript
+const handleDownloadSummary = async () => {
+  if (!summary) return;
+  
+  const element = document.createElement('a');
+  const file = new Blob([summary], { type: 'text/plain' });
+  element.href = URL.createObjectURL(file);
+  element.download = `clinical-protocol-summary-${new Date().toISOString().split('T')[0]}.txt`;
+  document.body.appendChild(element);
+  element.click();
+  document.body.removeChild(element);
+```
+- Creates a text file from summary content
+- Generates filename with current date
+- Triggers browser download
+- Cleans up temporary DOM elements
+
+```javascript
+  try {
+    await submitFeedback({
+      message_id: `download_${Date.now()}`,
+      question: 'Download summary',
+      answer: summary,
+      reaction_type: 'download_summary',
+      user_session: userSession,
+      sources: [],
+      evidence_count: 0,
+      confidence_score: 1.0,
+      additional_data: {
+        summary_length: summary.length,
+        sections_count: sections?.length || 0
+      }
+    });
+    
+    // Show feedback
+    setActionFeedback(prev => ({ ...prev, download: true }));
+    setTimeout(() => setActionFeedback(prev => ({ ...prev, download: false })), 2000);
+  } catch (error) {
+    console.error('Failed to record download feedback:', error);
+  }
+};
+```
+- Records download action for analytics
+- Shows "Downloaded!" confirmation for 2 seconds
+- Silently fails if feedback submission fails
+
+**Real-World Analogy**: Like downloading a PDF from Google Docs - creates a file and saves it to your computer.
+
+---
+
+## Copy Summary Function (Lines 67-90)
+
+```javascript
+const handleCopySummary = async () => {
+  if (!summary) return;
+  
+  try {
+    await navigator.clipboard.writeText(summary);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    
+    // Record feedback
+    await submitFeedback({
+      message_id: `copy_summary_${Date.now()}`,
+      question: 'Copy summary',
+      answer: summary,
+      reaction_type: 'copy_summary',
+      user_session: userSession,
+      sources: [],
+      evidence_count: 0,
+      confidence_score: 1.0,
+      additional_data: {
+        summary_length: summary.length,
+        sections_count: sections?.length || 0
+      }
+    });
+  } catch (error) {
+    console.error('Failed to copy or record feedback:', error);
+  }
+};
+```
+- Copies summary text to clipboard
+- Shows "Copied!" confirmation for 2 seconds
+- Records copy action for analytics
+- Uses modern Clipboard API
+
+---
+
+## Print Summary Function (Lines 92-125)
+
+```javascript
+const handlePrintSummary = async () => {
+  if (!summary) return;
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Clinical Protocol Summary</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+          h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
+          .header { margin-bottom: 30px; }
+          .content { white-space: pre-wrap; }
+          .footer { margin-top: 30px; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Clinical Protocol Executive Summary</h1>
+          <p>Generated on: ${new Date().toLocaleDateString()}</p>
+        </div>
+        <div class="content">${summary}</div>
+        <div class="footer">
+          <p>Generated by Clinical Protocol AI Assistant</p>
+        </div>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.print();
+```
+- Opens new browser window
+- Writes formatted HTML with summary
+- Includes header with title and date
+- Includes footer with attribution
+- Triggers print dialog
+
+```javascript
+  try {
+    await submitFeedback({
+      message_id: `print_${Date.now()}`,
+      question: 'Print summary',
+      answer: summary,
+      reaction_type: 'print_summary',
+      user_session: userSession,
+      sources: [],
+      evidence_count: 0,
+      confidence_score: 1.0,
+      additional_data: {
+        summary_length: summary.length,
+        sections_count: sections?.length || 0
+      }
+    });
+    
+    // Show feedback
+    setActionFeedback(prev => ({ ...prev, print: true }));
+    setTimeout(() => setActionFeedback(prev => ({ ...prev, print: false })), 2000);
+  } catch (error) {
+    console.error('Failed to record print feedback:', error);
+  }
+};
+```
+- Records print action for analytics
+- Shows "Printed!" confirmation for 2 seconds
+
+---
+
+## Main JSX Return (Lines 127+)
+
+### Header Section (Lines 129-160)
+```javascript
+<Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <Box>
+      <Typography variant="h5" gutterBottom>
+        Protocol Summary
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Executive summary and key insights from your clinical protocol
+      </Typography>
+    </Box>
+    
+    {summary && (
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Tooltip title={copied ? "Copied!" : "Copy summary"}>
+          <IconButton 
+            onClick={handleCopySummary}
+            color={copied ? "success" : "default"}
+          >
+            <ContentCopy />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title={actionFeedback.print ? "Printed!" : "Print summary"}>
+          <IconButton 
+            onClick={handlePrintSummary}
+            color={actionFeedback.print ? "success" : "default"}
+          >
+            <Print />
+          </IconButton>
+        </Tooltip>
+        <Button
+          variant="contained"
+          startIcon={<Download />}
+          onClick={handleDownloadSummary}
+          color={actionFeedback.download ? "success" : "primary"}
+        >
+          {actionFeedback.download ? "Downloaded!" : "Download"}
+        </Button>
+      </Box>
+    )}
+  </Box>
+</Box>
+```
+- Shows page title and description
+- Displays action buttons (copy, print, download)
+- Buttons only show if summary exists
+- Shows success feedback (color change) after action
+
+### Summary Statistics (Lines 162-200)
+```javascript
+{sections && sections.length > 0 && (
+  <Paper sx={{ p: 3, mb: 3 }}>
+    <Typography variant="h6" gutterBottom>
+      Summary Statistics
+    </Typography>
+    <Grid container spacing={3}>
+      <Grid item xs={12} sm={3}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h4" color="primary.main" fontWeight="bold">
+            {totalSections}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Total Sections
+          </Typography>
+        </Box>
+      </Grid>
+      <Grid item xs={12} sm={3}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h4" color="success.main" fontWeight="bold">
+            {approvedSections.length}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Approved Sections
+          </Typography>
+        </Box>
+      </Grid>
+      <Grid item xs={12} sm={3}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h4" color="info.main" fontWeight="bold">
+            {summary ? Math.round(summary.split(' ').length) : 0}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Summary Words
+          </Typography>
+        </Box>
+      </Grid>
+      <Grid item xs={12} sm={3}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h4" color="warning.main" fontWeight="bold">
+            {sections ? Math.round((sections.reduce((sum, s) => sum + s.confidence, 0) / sections.length) * 100) : 0}%
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Avg. Confidence
+          </Typography>
+        </Box>
+      </Grid>
+    </Grid>
+  </Paper>
+)}
+```
+- Shows statistics about the summary:
+  - Total sections extracted
+  - Approved sections used
+  - Word count in summary
+  - Average confidence score
+- Only displays if sections exist
+
+### Executive Summary Display (Lines 202-230)
+```javascript
+{summary ? (
+  <Paper sx={{ mb: 3 }}>
+    <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Description color="primary" />
+        <Typography variant="h6">
+          Executive Summary
+        </Typography>
+        <Chip label="AI Generated" size="small" color="primary" variant="outlined" />
+      </Box>
+    </Box>
+    <Box sx={{ p: 3 }}>
+      <Typography 
+        variant="body1" 
+        sx={{ 
+          whiteSpace: 'pre-wrap',
+          lineHeight: 1.7,
+          fontSize: '1.1rem'
+        }}
+      >
+        {summary}
+      </Typography>
+    </Box>
+  </Paper>
+) : (
+  <Alert severity="info" sx={{ mb: 3 }}>
+    <Typography variant="body1" gutterBottom>
+      No summary available yet
+    </Typography>
+    <Typography variant="body2">
+      To generate an executive summary:
+    </Typography>
+    <List dense>
+      <ListItem>
+        <ListItemText primary="1. Go to Document Analysis tab" />
+      </ListItem>
+      <ListItem>
+        <ListItemText primary="2. Extract key sections from your protocol" />
+      </ListItem>
+      <ListItem>
+        <ListItemText primary="3. Review and approve relevant sections" />
+      </ListItem>
+      <ListItem>
+        <ListItemText primary="4. Generate the executive summary" />
+      </ListItem>
+    </List>
+  </Alert>
+)}
+```
+- Displays the AI-generated summary text
+- Preserves formatting with `whiteSpace: 'pre-wrap'`
+- Shows "AI Generated" badge
+- If no summary, shows instructions on how to generate one
+
+### Approved Sections Overview (Lines 232-270)
+```javascript
+{approvedSections.length > 0 && (
+  <Paper sx={{ mb: 3 }}>
+    <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Analytics color="success" />
+        <Typography variant="h6">
+          Approved Sections ({approvedSections.length})
+        </Typography>
+      </Box>
+    </Box>
+    <Box sx={{ p: 3 }}>
+      <Grid container spacing={2}>
+        {approvedSections.map((section, index) => (
+          <Grid item xs={12} sm={6} md={4} key={index}>
+            <Card variant="outlined" sx={{ height: '100%' }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <CheckCircle color="success" fontSize="small" />
+                  <Typography variant="subtitle2" fontWeight="bold">
+                    {section.title}
+                  </Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  {section.description}
+                </Typography>
+                <Chip
+                  label={`${Math.round(section.confidence * 100)}% confidence`}
+                  size="small"
+                  color={section.confidence >= 0.8 ? 'success' : section.confidence >= 0.6 ? 'warning' : 'error'}
+                />
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+    </Box>
+  </Paper>
+)}
+```
+- Shows all approved sections that were used in summary
+- Displays section title, description, and confidence
+- Color-coded confidence badges
+- Only shows if sections were approved
+
+### Next Steps Section (Lines 272-295)
+```javascript
+<Paper sx={{ p: 3, backgroundColor: 'grey.50' }}>
+  <Typography variant="h6" gutterBottom>
+    Next Steps
+  </Typography>
+  <List>
+    <ListItem>
+      <ListItemIcon>
+        <Share color="primary" />
+      </ListItemIcon>
+      <ListItemText 
+        primary="Share with Team" 
+        secondary="Download or print the summary to share with your research team"
+      />
+    </ListItem>
+    <ListItem>
+      <ListItemIcon>
+        <Analytics color="primary" />
+      </ListItemIcon>
+      <ListItemText 
+        primary="Regulatory Review" 
+        secondary="Use this summary for regulatory submissions and stakeholder presentations"
+      />
+    </ListItem>
+    <ListItem>
+      <ListItemIcon>
+        <Description color="primary" />
+      </ListItemIcon>
+      <ListItemText 
+        primary="Documentation" 
+        secondary="Include in study documentation and protocol amendments"
+      />
+    </ListItem>
+  </List>
+</Paper>
+```
+- Provides suggestions for using the summary
+- Shows common use cases
+- Helps users understand value of the summary
+
+---
+
+## Summary Export Formats
+
+| Format | Method | Use Case |
+|--------|--------|----------|
+| **Copy** | Clipboard API | Paste into emails/documents |
+| **Download** | Text file | Save locally with date stamp |
+| **Print** | Browser print | Physical copy or PDF |
+
+---
+
+## Key Features
+
+| Feature | Purpose |
+|---------|---------|
+| **Copy to clipboard** | Quick sharing to other apps |
+| **Download as file** | Save locally with date in filename |
+| **Print** | Create PDF or physical copy |
+| **Statistics** | Shows summary metrics |
+| **Approved sections** | Shows which sections were used |
+| **Next steps** | Guides users on what to do next |
+| **Feedback tracking** | Records all user actions |
+
+---
+
+## Real-World Use Cases
+
+1. **Team sharing**: Download and email to colleagues
+2. **Regulatory submission**: Print for FDA or regulatory body
+3. **Stakeholder presentation**: Copy into PowerPoint slides
+4. **Documentation**: Include in study records
+5. **Quick reference**: Copy to clipboard for quick access
+
+---
+
+## Error Handling
+
+- **No summary**: Shows helpful instructions
+- **Copy failure**: Silently fails (modern browsers support clipboard)
+- **Print failure**: Browser handles gracefully
+- **Feedback errors**: Silently fails without interrupting workflow
+
+---
+
+## Performance Considerations
+
+1. **Lazy rendering**: Only renders if summary exists
+2. **Efficient copying**: Uses modern Clipboard API
+3. **Print optimization**: Formats HTML for printing
+4. **Async operations**: Non-blocking feedback submission
+
+---
+
+## Accessibility Features
+
+- Keyboard navigation for buttons
+- Tooltips for action buttons
+- Semantic HTML structure
+- Color contrast for readability
+- ARIA labels for screen readers
+
+---
+
+## Related Files
+
+- `api.js` - Backend API communication
+- `App.js` - Main application component
+- `DocumentAnalysis.js` - Generates summary
+- `ChatInterface.js` - Chat component

@@ -25,19 +25,32 @@ def warm_up_model():
             }
         }
         
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
+        # Increased timeout to 60 seconds for model warm-up
+        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
         if response.status_code == 200:
             _model_warmed = True
-            print("Model warmed up successfully")
+            print("✅ Model warmed up successfully")
             return True
         else:
-            print(f"Model warm-up failed: {response.status_code}")
+            print(f"⚠️ Model warm-up failed: {response.status_code}")
+            print("   System will use fallback responses")
             return False
+    except requests.exceptions.Timeout:
+        print("⚠️ Model warm-up timed out (Ollama may still be loading)")
+        print("   System will use fallback responses")
+        print("   Tip: Make sure Ollama is running with: ollama serve")
+        return False
+    except requests.exceptions.ConnectionError:
+        print("❌ Cannot connect to Ollama at http://localhost:11434")
+        print("   Make sure Ollama is running with: ollama serve")
+        print("   System will use fallback responses")
+        return False
     except Exception as e:
-        print(f"Model warm-up error: {e}")
+        print(f"⚠️ Model warm-up error: {e}")
+        print("   System will use fallback responses")
         return False
 
-def ask_llm(prompt: str, timeout: int = 45):
+def ask_llm(prompt: str, timeout: int = 120):
     """Ask LLM with optimized settings for natural, human-like responses"""
     try:
         # Try to warm up model if not already done
@@ -96,4 +109,4 @@ def ask_llm(prompt: str, timeout: int = 45):
 
 def ask_llm_quick(prompt: str):
     """Quick LLM call with very short timeout"""
-    return ask_llm(prompt, timeout=10)  # Reduced from 15 to 10 seconds
+    return ask_llm(prompt, timeout=60)  # 60 seconds for quick calls

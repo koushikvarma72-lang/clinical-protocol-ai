@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from pdf_loader import load_pdf_text, load_pdf_with_pages
 from text_chunker import chunk_text, chunk_pages_with_metadata
 from embeddings import get_embedding
@@ -16,16 +17,108 @@ import json
 import asyncio
 import uuid
 import time
-
-import asyncio
+import threading
+import atexit
 from concurrent.futures import ThreadPoolExecutor
+
 # Create a global executor
 executor = ThreadPoolExecutor(max_workers=10)
 
-app = FastAPI()
+# Global flag to control cleanup thread
+_cleanup_thread = None
+_cleanup_running = True
 
 # Global progress store (in production, use Redis or database)
 progress_store = {}
+
+# Cleanup scheduler for progress store
+def cleanup_progress_store():
+    """Remove old progress entries to prevent memory leak"""
+    current_time = time.time()
+    expired_tasks = []
+    
+    for task_id, progress_data in progress_store.items():
+        # If task is completed and older than 1 hour, mark for deletion
+        if progress_data.get('completed') and 'created_at' in progress_data:
+            if current_time - progress_data['created_at'] > 3600:
+                expired_tasks.append(task_id)
+    
+    for task_id in expired_tasks:
+        del progress_store[task_id]
+    
+    if expired_tasks:
+        print(f"Cleaned up {len(expired_tasks)} old progress entries")
+    return len(expired_tasks)
+
+def start_cleanup_scheduler():
+    """Start background cleanup scheduler"""
+    global _cleanup_thread, _cleanup_running
+    
+    def cleanup_loop():
+        global _cleanup_running
+        while _cleanup_running:
+            time.sleep(1800)  # 30 minutes
+            if _cleanup_running:
+                try:
+                    cleanup_progress_store()
+                except Exception as e:
+                    print(f"Cleanup error: {e}")
+    
+    _cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+    _cleanup_thread.start()
+    print("✅ Progress store cleanup scheduler started")
+
+def stop_cleanup_scheduler():
+    """Stop the cleanup scheduler gracefully"""
+    global _cleanup_running
+    _cleanup_running = False
+    print("✅ Cleanup scheduler stopped")
+
+# Register cleanup on exit
+atexit.register(stop_cleanup_scheduler)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    # Startup
+    print("Starting system...")
+    
+    # Start cleanup scheduler for progress store
+    start_cleanup_scheduler()
+
+    # Warm up the LLM model in background (non-blocking)
+    print("Warming up LLM model...")
+    def warmup_thread():
+        try:
+            warm_up_model()
+        except Exception as e:
+            print(f"LLM warmup failed (will use fallback): {e}")
+    
+    # Run warm-up in background thread to avoid blocking startup
+    thread = threading.Thread(target=warmup_thread, daemon=True)
+    thread.start()
+
+    collection = get_collection()
+
+    print("Vector count:", collection.count())
+
+    # ✅ prevents re-embedding
+    if collection.count() > 0:
+        print(f"Vector DB already exists ({collection.count()} chunks)")
+    else:
+        print("Skipping automatic PDF loading on startup (use /upload-pdf endpoint instead)")
+    
+    print("System ready for document uploads")
+    
+    yield  # Application runs here
+    
+    # Shutdown
+    print("\n🛑 Shutting down system...")
+    stop_cleanup_scheduler()
+    executor.shutdown(wait=False)
+    print("✅ System shutdown complete")
+
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware for frontend
 app.add_middleware(
@@ -35,52 +128,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-def startup_event():
-    print("Starting system...")
-
-    # Warm up the LLM model in background
-    print("Warming up LLM model...")
-    warm_up_model()
-
-    collection = get_collection()
-
-    print("Vector count:", collection.count())
-
-    # ✅ prevents re-embedding
-    if collection.count() > 0:
-        print(f"Vector DB already exists ({collection.count()} chunks)")
-        return
-
-    print("Loading PDF with page metadata...")
-    pages_data = load_pdf_with_pages("../dataset/NCT02561156_Prot_000.pdf")
-
-    print("Chunking text with page metadata...")
-    chunks = chunk_pages_with_metadata(pages_data)
-    print(f"Total chunks: {len(chunks)}")
-
-    print("Creating embeddings...")
-
-    for i, chunk in enumerate(chunks):
-        embedding = get_embedding(chunk["text"])
-
-        collection.add(
-            documents=[chunk["text"]],
-            embeddings=[embedding],
-            ids=[chunk["id"]],
-            metadatas=[{
-                "page_number": chunk["page_number"],
-                "source": chunk["source"],
-                "start_pos": chunk["start_pos"],
-                "end_pos": chunk["end_pos"]
-            }]
-        )
-
-        if i % 20 == 0:
-            print(f"Embedded {i}/{len(chunks)}")
-
-    print("Embedding completed and saved.")
 
 class QuestionRequest(BaseModel):
     question: str
@@ -178,12 +225,6 @@ async def upload_pdf(file: UploadFile = File(...)):
         print(f"Upload error: {e}")
         return {"error": str(e), "status": "failed"}
 
-@app.get("/upload-progress/{task_id}")
-def get_upload_progress(task_id: str):
-    """Get progress of upload task - placeholder for future implementation"""
-    # This would be implemented with a task queue like Celery in production
-    return {"progress": 100, "status": "completed", "message": "Processing complete"}
-
 @app.post("/upload-pdf-with-progress")
 async def upload_pdf_with_progress(file: UploadFile = File(...)):
     """Upload PDF with real-time progress tracking"""
@@ -194,13 +235,15 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
     task_id = str(uuid.uuid4())
     
     # Store progress in memory (in production, use Redis or database)
+    import time
     progress_store[task_id] = {
         "stage": "starting",
         "progress": 0,
         "message": "Starting PDF processing...",
         "details": {},
         "completed": False,
-        "error": None
+        "error": None,
+        "created_at": time.time()
     }
     
     try:
@@ -280,37 +323,55 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
         embedding_progress_start = 60
         embedding_progress_range = 35  # 60% to 95%
         
+        # Process embeddings with error handling
+        failed_chunks = []
         for i, chunk in enumerate(chunks):
-            # Calculate embedding progress
-            chunk_progress = (i / len(chunks)) * embedding_progress_range
-            current_progress = embedding_progress_start + chunk_progress
-            
-            # Update progress every 5 chunks or for the last chunk
-            if i % 5 == 0 or i == len(chunks) - 1:
-                progress_store[task_id].update({
-                    "progress": int(current_progress),
-                    "message": f"Processing embeddings: {i+1}/{len(chunks)} chunks completed",
-                    "details": {
-                        "pages_count": len(pages_data),
-                        "chunks_count": len(chunks),
-                        "embedded_chunks": i + 1,
-                        "current_chunk_page": chunk["page_number"],
-                        "percentage_complete": f"{((i+1)/len(chunks)*100):.1f}%"
-                    }
-                })
-            
-            embedding = get_embedding(chunk["text"])
-            collection.add(
-                documents=[chunk["text"]],
-                embeddings=[embedding],
-                ids=[chunk["id"]],
-                metadatas=[{
-                    "page_number": chunk["page_number"],
-                    "source": chunk["source"],
-                    "start_pos": chunk["start_pos"],
-                    "end_pos": chunk["end_pos"]
-                }]
-            )
+            try:
+                # Calculate embedding progress
+                chunk_progress = (i / len(chunks)) * embedding_progress_range
+                current_progress = embedding_progress_start + chunk_progress
+                
+                # Update progress every 5 chunks or for the last chunk
+                if i % 5 == 0 or i == len(chunks) - 1:
+                    progress_store[task_id].update({
+                        "progress": int(current_progress),
+                        "message": f"Processing embeddings: {i+1}/{len(chunks)} chunks completed",
+                        "details": {
+                            "pages_count": len(pages_data),
+                            "chunks_count": len(chunks),
+                            "embedded_chunks": i + 1,
+                            "current_chunk_page": chunk["page_number"],
+                            "percentage_complete": f"{((i+1)/len(chunks)*100):.1f}%"
+                        }
+                    })
+                
+                try:
+                    embedding = get_embedding(chunk["text"], timeout=30, retries=2)
+                    collection.add(
+                        documents=[chunk["text"]],
+                        embeddings=[embedding],
+                        ids=[chunk["id"]],
+                        metadatas=[{
+                            "page_number": chunk["page_number"],
+                            "source": chunk["source"],
+                            "start_pos": chunk["start_pos"],
+                            "end_pos": chunk["end_pos"]
+                        }]
+                    )
+                except Exception as e:
+                    print(f"Failed to embed chunk {i}: {e}")
+                    failed_chunks.append(i)
+                    # Continue with next chunk instead of failing entire upload
+                    continue
+                    
+            except Exception as e:
+                print(f"Error processing chunk {i}: {e}")
+                failed_chunks.append(i)
+                continue
+        
+        # Log any failed chunks
+        if failed_chunks:
+            print(f"Warning: {len(failed_chunks)} chunks failed to embed: {failed_chunks}")
         
         # Stage 6: Completion (100%)
         progress_store[task_id].update({
@@ -320,7 +381,8 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
             "details": {
                 "pages_count": len(pages_data),
                 "chunks_count": len(chunks),
-                "embedded_chunks": len(chunks),
+                "embedded_chunks": len(chunks) - len(failed_chunks),
+                "failed_chunks": len(failed_chunks),
                 "filename": file.filename
             },
             "completed": True
@@ -339,6 +401,14 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
         }
     
     except Exception as e:
+        print(f"Upload error: {e}")
+        # Clean up temp file if it exists
+        try:
+            if 'tmp_file_path' in locals():
+                os.unlink(tmp_file_path)
+        except:
+            pass
+        
         progress_store[task_id].update({
             "stage": "failed",
             "progress": 0,
@@ -346,6 +416,12 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
             "error": str(e),
             "completed": True
         })
+        
+        return {
+            "task_id": task_id,
+            "error": str(e),
+            "status": "failed"
+        }
         return {
             "task_id": task_id,
             "error": str(e), 
@@ -996,3 +1072,64 @@ def search(request: QuestionRequest):
         return {
             "error": str(e)
         }
+
+@app.get("/feedback/stats")
+def get_feedback_stats(days: int = 7):
+    """Get feedback statistics for the last N days"""
+    try:
+        stats = feedback_db.get_stats(days)
+        return {
+            "success": True,
+            "stats": {
+                "total_questions": stats.get("total_questions", 0),
+                "total_likes": stats.get("total_likes", 0),
+                "total_dislikes": stats.get("total_dislikes", 0),
+                "total_copies": stats.get("total_copies", 0),
+                "total_evidence_views": stats.get("total_evidence_views", 0),
+                "satisfaction_rate": stats.get("satisfaction_rate", 0),
+                "avg_confidence": stats.get("avg_confidence", 0.0)
+            }
+        }
+    except Exception as e:
+        print(f"Error getting feedback stats: {e}")
+        return {
+            "success": False,
+            "stats": {
+                "total_questions": 0,
+                "total_likes": 0,
+                "total_dislikes": 0,
+                "total_copies": 0,
+                "total_evidence_views": 0,
+                "satisfaction_rate": 0,
+                "avg_confidence": 0.0
+            }
+        }
+
+@app.get("/feedback/recent")
+def get_recent_feedback(limit: int = 20):
+    """Get recent feedback entries"""
+    try:
+        feedback_list = feedback_db.get_recent(limit)
+        return {
+            "success": True,
+            "feedback": [
+                {
+                    "question": f.get("question", ""),
+                    "reaction_type": f.get("reaction_type", ""),
+                    "timestamp": f.get("timestamp", ""),
+                    "confidence_score": f.get("confidence_score", 0)
+                }
+                for f in feedback_list
+            ]
+        }
+    except Exception as e:
+        print(f"Error getting recent feedback: {e}")
+        return {
+            "success": False,
+            "feedback": []
+        }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)

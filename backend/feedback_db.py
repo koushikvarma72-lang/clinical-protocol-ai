@@ -28,13 +28,13 @@ class FeedbackDB:
                 message_id TEXT NOT NULL,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
-                reaction_type TEXT NOT NULL,  -- 'like', 'dislike', 'copy', 'view_evidence'
+                reaction_type TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 user_session TEXT,
-                sources TEXT,  -- JSON array of sources
+                sources TEXT,
                 evidence_count INTEGER,
                 confidence_score REAL,
-                additional_data TEXT  -- JSON for extra data
+                additional_data TEXT
             )
         ''')
         
@@ -187,6 +187,10 @@ class FeedbackDB:
             'satisfaction_rate': 0.0
         }
     
+    def get_stats(self, days: int = 7) -> Dict:
+        """Alias for get_feedback_stats for API compatibility"""
+        return self.get_feedback_stats(days)
+    
     def get_recent_feedback(self, limit: int = 50) -> List[Dict]:
         """Get recent feedback entries"""
         conn = sqlite3.connect(self.db_path)
@@ -217,6 +221,10 @@ class FeedbackDB:
             })
         
         return feedback_list
+    
+    def get_recent(self, limit: int = 20) -> List[Dict]:
+        """Alias for get_recent_feedback for API compatibility"""
+        return self.get_recent_feedback(limit)
     
     def record_question(self, user_session: str = None):
         """Record that a question was asked"""
