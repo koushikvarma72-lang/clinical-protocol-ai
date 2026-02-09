@@ -234,6 +234,15 @@ export const getRecentFeedback = async (limit = 20) => {
   }
 };
 
+export const getSummaryApprovals = async (limit = 50) => {
+  try {
+    const response = await api.get(`/summary-approvals?limit=${limit}`);
+    return response.data;
+  } catch (error) {
+    throw new Error(`Failed to get summary approvals: ${error.message}`);
+  }
+};
+
 export const getStatus = async () => {
   const cacheKey = 'status';
   const cached = getCachedData(cacheKey);

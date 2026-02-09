@@ -14,7 +14,12 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemIcon
+  ListItemIcon,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField
 } from '@mui/material';
 import {
   Download,
@@ -23,7 +28,9 @@ import {
   CheckCircle,
   Description,
   Analytics,
-  ContentCopy
+  ContentCopy,
+  ThumbUp,
+  ThumbDown
 } from '@mui/icons-material';
 import { submitFeedback } from '../services/api';
 
@@ -31,6 +38,10 @@ const ProtocolSummary = ({ summary, sections }) => {
   const [copied, setCopied] = useState(false);
   const [userSession] = useState(() => `summary_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [actionFeedback, setActionFeedback] = useState({});
+  const [disapprovalDialogOpen, setDisapprovalDialogOpen] = useState(false);
+  const [disapprovalReason, setDisapprovalReason] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState(null);
+  const [summaryId] = useState(() => `summary_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
 
   const handleDownloadSummary = async () => {
     if (!summary) return;
@@ -152,6 +163,70 @@ const ProtocolSummary = ({ summary, sections }) => {
     }
   };
 
+  const handleApproveSummary = async () => {
+    try {
+      const response = await fetch('http://localhost:8001/summary-approval', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          summary_id: summaryId,
+          status: 'approved',
+          user_session: userSession,
+          summary_content: summary,
+          approved_sections_count: sections?.filter(s => s.approved).length || 0
+        })
+      });
+
+      if (response.ok) {
+        setApprovalStatus('approved');
+        setActionFeedback(prev => ({ ...prev, approve: true }));
+        setTimeout(() => setActionFeedback(prev => ({ ...prev, approve: false })), 2000);
+      }
+    } catch (error) {
+      console.error('Failed to record approval:', error);
+    }
+  };
+
+  const handleDisapproveSummary = () => {
+    setDisapprovalDialogOpen(true);
+  };
+
+  const handleSubmitDisapproval = async () => {
+    if (!disapprovalReason.trim()) {
+      alert('Please provide a reason for disapproval');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:8001/summary-approval', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          summary_id: summaryId,
+          status: 'disapproved',
+          reason: disapprovalReason,
+          user_session: userSession,
+          summary_content: summary,
+          approved_sections_count: sections?.filter(s => s.approved).length || 0
+        })
+      });
+
+      if (response.ok) {
+        setApprovalStatus('disapproved');
+        setDisapprovalDialogOpen(false);
+        setDisapprovalReason('');
+        setActionFeedback(prev => ({ ...prev, disapprove: true }));
+        setTimeout(() => setActionFeedback(prev => ({ ...prev, disapprove: false })), 2000);
+      }
+    } catch (error) {
+      console.error('Failed to record disapproval:', error);
+    }
+  };
+
   const approvedSections = sections?.filter(section => section.approved) || [];
   const totalSections = sections?.length || 0;
 
@@ -264,12 +339,21 @@ const ProtocolSummary = ({ summary, sections }) => {
         {summary ? (
           <Paper sx={{ mb: 3 }}>
             <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Description color="primary" />
-                <Typography variant="h6">
-                  Executive Summary
-                </Typography>
-                <Chip label="AI Generated" size="small" color="primary" variant="outlined" />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Description color="primary" />
+                  <Typography variant="h6">
+                    Executive Summary
+                  </Typography>
+                  <Chip label="AI Generated" size="small" color="primary" variant="outlined" />
+                </Box>
+                {approvalStatus && (
+                  <Chip 
+                    label={approvalStatus === 'approved' ? 'Approved ✓' : 'Disapproved ✗'} 
+                    color={approvalStatus === 'approved' ? 'success' : 'error'}
+                    variant="filled"
+                  />
+                )}
               </Box>
             </Box>
             <Box sx={{ p: 3 }}>
@@ -278,11 +362,34 @@ const ProtocolSummary = ({ summary, sections }) => {
                 sx={{ 
                   whiteSpace: 'pre-wrap',
                   lineHeight: 1.7,
-                  fontSize: '1.1rem'
+                  fontSize: '1.1rem',
+                  mb: 3
                 }}
               >
                 {summary}
               </Typography>
+              
+              {/* Approval Buttons */}
+              <Box sx={{ display: 'flex', gap: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                <Button
+                  variant={approvalStatus === 'approved' ? 'contained' : 'outlined'}
+                  color="success"
+                  startIcon={<ThumbUp />}
+                  onClick={handleApproveSummary}
+                  disabled={approvalStatus === 'approved'}
+                >
+                  {approvalStatus === 'approved' ? 'Approved' : 'Approve Summary'}
+                </Button>
+                <Button
+                  variant={approvalStatus === 'disapproved' ? 'contained' : 'outlined'}
+                  color="error"
+                  startIcon={<ThumbDown />}
+                  onClick={handleDisapproveSummary}
+                  disabled={approvalStatus === 'disapproved'}
+                >
+                  {approvalStatus === 'disapproved' ? 'Disapproved' : 'Disapprove Summary'}
+                </Button>
+              </Box>
             </Box>
           </Paper>
         ) : (
@@ -386,6 +493,42 @@ const ProtocolSummary = ({ summary, sections }) => {
           </List>
         </Paper>
       </Box>
+
+      {/* Disapproval Reason Dialog */}
+      <Dialog 
+        open={disapprovalDialogOpen} 
+        onClose={() => setDisapprovalDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Why are you disapproving this summary?
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <TextField
+            fullWidth
+            multiline
+            rows={4}
+            placeholder="Please provide a reason for disapproving this summary (e.g., missing information, inaccurate content, poor organization, etc.)"
+            value={disapprovalReason}
+            onChange={(e) => setDisapprovalReason(e.target.value)}
+            variant="outlined"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisapprovalDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmitDisapproval}
+            variant="contained"
+            color="error"
+            disabled={!disapprovalReason.trim()}
+          >
+            Submit Disapproval
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

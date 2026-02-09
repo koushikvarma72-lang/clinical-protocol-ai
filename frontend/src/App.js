@@ -573,12 +573,18 @@ function TabPanel({ children, value, index, ...other }) {
   return (
     <div
       role="tabpanel"
-      hidden={value !== index}
       id={`tabpanel-${index}`}
       aria-labelledby={`tab-${index}`}
+      style={{
+        display: value === index ? 'flex' : 'none',
+        flex: 1,
+        minHeight: 0
+      }}
       {...other}
     >
-      {value === index && <Box sx={{ flex: 1 }}>{children}</Box>}
+      <Box sx={{ flex: 1, minHeight: 0, width: '100%' }}>
+        {children}
+      </Box>
     </div>
   );
 }
@@ -589,6 +595,7 @@ function App() {
   const [documentStatus, setDocumentStatus] = useState({ status: 'no_data', vector_count: 0 });
   const [extractedSections, setExtractedSections] = useState([]);
   const [finalSummary, setFinalSummary] = useState(null);
+  const [documentReady, setDocumentReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);

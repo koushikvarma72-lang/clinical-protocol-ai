@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -12,14 +12,16 @@ import {
   ListItemText,
   Card,
   CardContent,
-  Grid
+  Grid,
+  Chip
 } from '@mui/material';
 import {
   CloudUpload,
   Description,
   CheckCircle,
   Info,
-  Refresh
+  Refresh,
+  Delete
 } from '@mui/icons-material';
 import { uploadPDFWithProgress, getUploadProgress } from '../services/api';
 
@@ -29,6 +31,28 @@ const DocumentUpload = ({ onUploadComplete }) => {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+
+  // Fetch uploaded documents on component mount and after upload
+  useEffect(() => {
+    fetchUploadedDocuments();
+  }, []);
+
+  const fetchUploadedDocuments = async () => {
+    setLoadingDocuments(true);
+    try {
+      const response = await fetch('http://localhost:8001/uploaded-documents');
+      const data = await response.json();
+      if (data.documents) {
+        setUploadedDocuments(data.documents);
+      }
+    } catch (err) {
+      console.error('Failed to fetch documents:', err);
+    } finally {
+      setLoadingDocuments(false);
+    }
+  };
 
   const handleFileUpload = async (file) => {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -45,7 +69,11 @@ const DocumentUpload = ({ onUploadComplete }) => {
       const response = await uploadPDFWithProgress(file);
       
       if (response.error) {
-        setError(response.error);
+        if (response.status === 'duplicate') {
+          setError(`⚠️ ${response.error}\n\n${response.message}`);
+        } else {
+          setError(response.error);
+        }
         setUploading(false);
         return;
       }
@@ -66,9 +94,12 @@ const DocumentUpload = ({ onUploadComplete }) => {
                 filename: file.name,
                 chunks_count: progressData.details?.chunks_count || 0,
                 pages_count: progressData.details?.pages_count || 0,
+                category: progressData.details?.category || 'Clinical Document',
                 status: 'completed'
               });
               onUploadComplete && onUploadComplete();
+              // Refresh the documents list
+              fetchUploadedDocuments();
             }
             setUploading(false);
           } else {
@@ -270,7 +301,7 @@ const DocumentUpload = ({ onUploadComplete }) => {
             </Box>
 
             <Grid container spacing={2} sx={{ mb: 3 }}>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <Card variant="outlined">
                   <CardContent sx={{ textAlign: 'center' }}>
                     <Typography variant="h4" color="primary.main" fontWeight="bold">
@@ -282,7 +313,7 @@ const DocumentUpload = ({ onUploadComplete }) => {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <Card variant="outlined">
                   <CardContent sx={{ textAlign: 'center' }}>
                     <Typography variant="h4" color="success.main" fontWeight="bold">
@@ -294,7 +325,7 @@ const DocumentUpload = ({ onUploadComplete }) => {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <Card variant="outlined">
                   <CardContent sx={{ textAlign: 'center' }}>
                     <Typography variant="h4" color="info.main" fontWeight="bold">
@@ -306,11 +337,23 @@ const DocumentUpload = ({ onUploadComplete }) => {
                   </CardContent>
                 </Card>
               </Grid>
+              <Grid item xs={12} sm={3}>
+                <Card variant="outlined" sx={{ backgroundColor: '#f0f9ff' }}>
+                  <CardContent sx={{ textAlign: 'center' }}>
+                    <Typography variant="body2" color="primary.main" fontWeight="bold">
+                      {uploadResult.category}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Document Category
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
 
             <Alert severity="success" sx={{ mb: 2 }}>
               <Typography variant="body2">
-                <strong>{uploadResult.filename}</strong> has been successfully processed. 
+                <strong>{uploadResult.filename}</strong> ({uploadResult.category}) has been successfully processed. 
                 You can now use the Chat Assistant and Document Analysis features.
               </Typography>
             </Alert>
@@ -331,6 +374,81 @@ const DocumentUpload = ({ onUploadComplete }) => {
               Try Again
             </Button>
           </Alert>
+        )}
+
+        {/* Uploaded Documents */}
+        {uploadedDocuments.length > 0 && (
+          <Paper sx={{ p: 3, mt: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">
+                Uploaded Documents ({uploadedDocuments.length})
+              </Typography>
+              <Button 
+                size="small" 
+                onClick={fetchUploadedDocuments}
+                startIcon={<Refresh />}
+              >
+                Refresh
+              </Button>
+            </Box>
+
+            <Grid container spacing={2}>
+              {uploadedDocuments.map((doc) => (
+                <Grid item xs={12} sm={6} md={4} key={doc.id}>
+                  <Card variant="outlined" sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <CardContent sx={{ flex: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1 }}>
+                        <Description color="primary" sx={{ mt: 0.5 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography 
+                            variant="subtitle2" 
+                            sx={{ 
+                              wordBreak: 'break-word',
+                              fontWeight: 'bold'
+                            }}
+                          >
+                            {doc.filename}
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      <Box sx={{ mb: 1 }}>
+                        <Chip 
+                          label={doc.category} 
+                          size="small" 
+                          variant="outlined"
+                          color="primary"
+                        />
+                      </Box>
+
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1 }}>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            Pages
+                          </Typography>
+                          <Typography variant="body2" fontWeight="bold">
+                            {doc.pages_count}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            Chunks
+                          </Typography>
+                          <Typography variant="body2" fontWeight="bold">
+                            {doc.chunks_count}
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      <Typography variant="caption" color="text.secondary">
+                        Uploaded: {new Date(doc.upload_timestamp).toLocaleDateString()}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          </Paper>
         )}
 
         {/* Guidelines */}

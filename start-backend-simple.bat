@@ -1,3 +1,4 @@
+REM Invoke-WebRequest -Uri "http://localhost:8001/clear-database" -Method Post -UseBasicParsing | Select-Object -ExpandProperty Content
 @echo off
 echo.
 echo ========================================

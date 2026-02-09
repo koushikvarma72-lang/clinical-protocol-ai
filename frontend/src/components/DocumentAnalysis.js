@@ -20,7 +20,8 @@ import {
   FormControlLabel,
   Divider,
   IconButton,
-  Tooltip
+  Tooltip,
+  TextField
 } from '@mui/material';
 import {
   AutoAwesome,
@@ -28,7 +29,9 @@ import {
   CheckCircle,
   Cancel,
   Refresh,
-  Analytics
+  Analytics,
+  ThumbUp,
+  ThumbDown
 } from '@mui/icons-material';
 import { extractKeySections, submitReview, submitFeedback } from '../services/api';
 
@@ -41,6 +44,9 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
   const [generating, setGenerating] = useState(false);
   const [analysisComplete, setAnalysisComplete] = useState(false);
   const [userSession] = useState(() => `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  const [disapprovalDialogOpen, setDisapprovalDialogOpen] = useState(false);
+  const [disapprovalReason, setDisapprovalReason] = useState('');
+  const [selectedSectionIndex, setSelectedSectionIndex] = useState(null);
 
   useEffect(() => {
     if (extractedSections && extractedSections.length > 0) {
@@ -84,7 +90,7 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
 
   const handleApprovalChange = async (index, approved) => {
     const updatedSections = sections.map((section, i) => 
-      i === index ? { ...section, approved } : section
+      i === index ? { ...section, approved, disapprovalReason: null } : section
     );
     setSections(updatedSections);
     onSectionsExtracted(updatedSections);
@@ -111,6 +117,54 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
     } catch (error) {
       console.error('Failed to record approval feedback:', error);
     }
+  };
+
+  const handleDisapproveClick = (index) => {
+    setSelectedSectionIndex(index);
+    setDisapprovalReason('');
+    setDisapprovalDialogOpen(true);
+  };
+
+  const handleSubmitDisapproval = async () => {
+    if (!disapprovalReason.trim()) {
+      alert('Please provide a reason for disapproval');
+      return;
+    }
+
+    const index = selectedSectionIndex;
+    const updatedSections = sections.map((section, i) => 
+      i === index ? { ...section, approved: false, disapprovalReason } : section
+    );
+    setSections(updatedSections);
+    onSectionsExtracted(updatedSections);
+
+    // Record feedback for disapproval with reason
+    const section = sections[index];
+    try {
+      await submitFeedback({
+        message_id: `disapproval_${section.title}_${Date.now()}`,
+        question: `Section disapproval: ${section.title}`,
+        answer: section.content,
+        reaction_type: 'disapprove_section',
+        user_session: userSession,
+        sources: section.sources || [],
+        evidence_count: section.evidence_count || 0,
+        confidence_score: section.confidence || 0.0,
+        additional_data: {
+          section_title: section.title,
+          section_index: index,
+          disapproval_reason: disapprovalReason,
+          approved: false
+        }
+      });
+      
+    } catch (error) {
+      console.error('Failed to record disapproval feedback:', error);
+    }
+
+    setDisapprovalDialogOpen(false);
+    setDisapprovalReason('');
+    setSelectedSectionIndex(null);
   };
 
   const handleViewSection = async (section) => {
@@ -356,7 +410,7 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
                     )}
                   </CardContent>
                   
-                  <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
+                  <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2, flexWrap: 'wrap', gap: 1 }}>
                     <Button
                       size="small"
                       startIcon={<Visibility />}
@@ -365,19 +419,40 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
                       View Full
                     </Button>
                     
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={section.approved || false}
-                          onChange={(e) => handleApprovalChange(index, e.target.checked)}
-                          icon={<Cancel />}
-                          checkedIcon={<CheckCircle />}
-                          color="success"
-                        />
-                      }
-                      label={section.approved ? 'Approved' : 'Approve'}
-                    />
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant={section.approved ? 'contained' : 'outlined'}
+                        color="success"
+                        startIcon={<ThumbUp />}
+                        onClick={() => handleApprovalChange(index, true)}
+                        disabled={section.approved}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="small"
+                        variant={section.approved === false && section.disapprovalReason ? 'contained' : 'outlined'}
+                        color="error"
+                        startIcon={<ThumbDown />}
+                        onClick={() => handleDisapproveClick(index)}
+                        disabled={section.approved === false && section.disapprovalReason}
+                      >
+                        Disapprove
+                      </Button>
+                    </Box>
                   </CardActions>
+                  
+                  {section.disapprovalReason && (
+                    <Box sx={{ px: 2, pb: 2, backgroundColor: '#ffebee', borderRadius: 1 }}>
+                      <Typography variant="caption" color="error" fontWeight="bold">
+                        Disapproval Reason:
+                      </Typography>
+                      <Typography variant="body2" color="error" sx={{ mt: 0.5 }}>
+                        {section.disapprovalReason}
+                      </Typography>
+                    </Box>
+                  )}
                 </Card>
               </Grid>
             ))}
@@ -437,6 +512,42 @@ const DocumentAnalysis = ({ documentReady, onSectionsExtracted, extractedSection
         <DialogActions>
           <Button onClick={() => setDialogOpen(false)}>
             Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Disapproval Reason Dialog */}
+      <Dialog 
+        open={disapprovalDialogOpen} 
+        onClose={() => setDisapprovalDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Why are you disapproving this section?
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <TextField
+            fullWidth
+            multiline
+            rows={4}
+            placeholder="Please provide a reason for disapproving this section (e.g., inaccurate information, missing details, unclear content, etc.)"
+            value={disapprovalReason}
+            onChange={(e) => setDisapprovalReason(e.target.value)}
+            variant="outlined"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisapprovalDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmitDisapproval}
+            variant="contained"
+            color="error"
+            disabled={!disapprovalReason.trim()}
+          >
+            Submit Disapproval
           </Button>
         </DialogActions>
       </Dialog>

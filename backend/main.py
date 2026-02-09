@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pdf_loader import load_pdf_text, load_pdf_with_pages
 from text_chunker import chunk_text, chunk_pages_with_metadata
-from embeddings import get_embedding
+from embeddings import get_embedding, clear_embedding_cache
 from vectordb import get_collection
 from pydantic import BaseModel
 from rag_query import answer_question, simple_search
@@ -152,14 +152,32 @@ class FeedbackRequest(BaseModel):
     confidence_score: float = 0.0
     additional_data: Dict = {}
 
+class SummaryApprovalRequest(BaseModel):
+    summary_id: str
+    status: str  # 'approved' or 'disapproved'
+    reason: str = None
+    user_session: str = None
+    summary_content: str = None
+    approved_sections_count: int = 0
+
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload and process a PDF protocol - simple version that works"""
+    """Upload and process a PDF protocol - adds to existing documents"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
     try:
         print(f"Starting upload of {file.filename}")
+        
+        # Check if file already exists in database
+        existing_docs = feedback_db.get_all_documents()
+        for doc in existing_docs:
+            if doc['filename'] == file.filename:
+                return {
+                    "error": f"File '{file.filename}' has already been uploaded",
+                    "status": "duplicate",
+                    "message": "This document is already in the system. Please upload a different document or clear the database first."
+                }
         
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
@@ -177,19 +195,10 @@ async def upload_pdf(file: UploadFile = File(...)):
         chunks = chunk_pages_with_metadata(pages_data)
         print(f"Created {len(chunks)} chunks")
 
-        # Clear existing collection and add new chunks
+        # Get collection (don't clear - add to existing)
         collection = get_collection()
         
-        # Clear existing data
-        try:
-            existing_data = collection.get()
-            if existing_data['ids']:
-                collection.delete(ids=existing_data['ids'])
-                print(f"Cleared {len(existing_data['ids'])} existing documents")
-        except Exception as e:
-            print(f"Note: Could not clear existing collection: {e}")
-        
-        # Add new chunks with embeddings
+        # Add new chunks with embeddings (append to existing data)
         print("Generating embeddings...")
         for i, chunk in enumerate(chunks):
             if i % 10 == 0:
@@ -204,9 +213,22 @@ async def upload_pdf(file: UploadFile = File(...)):
                     "page_number": chunk["page_number"],
                     "source": chunk["source"],
                     "start_pos": chunk["start_pos"],
-                    "end_pos": chunk["end_pos"]
+                    "end_pos": chunk["end_pos"],
+                    "filename": file.filename
                 }]
             )
+        
+        # Detect document category
+        category = detect_document_category(file.filename)
+        
+        # Record document in database
+        feedback_db.record_document(
+            filename=file.filename,
+            category=category,
+            pages_count=len(pages_data),
+            chunks_count=len(chunks),
+            file_size=len(content)
+        )
         
         # Clean up temp file
         os.unlink(tmp_file_path)
@@ -218,6 +240,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             "chunks_count": len(chunks),
             "pages_count": len(pages_data),
             "filename": file.filename,
+            "category": category,
             "status": "completed"
         }
     
@@ -225,11 +248,43 @@ async def upload_pdf(file: UploadFile = File(...)):
         print(f"Upload error: {e}")
         return {"error": str(e), "status": "failed"}
 
+def detect_document_category(filename: str) -> str:
+    """Detect document category based on filename"""
+    filename_lower = filename.lower()
+    
+    # Check for common protocol types
+    if any(word in filename_lower for word in ['protocol', 'study protocol', 'clinical protocol']):
+        return 'Clinical Protocol'
+    elif any(word in filename_lower for word in ['informed consent', 'ict', 'consent form']):
+        return 'Informed Consent'
+    elif any(word in filename_lower for word in ['safety', 'adverse', 'adr']):
+        return 'Safety Report'
+    elif any(word in filename_lower for word in ['statistical', 'analysis plan', 'sap']):
+        return 'Statistical Analysis Plan'
+    elif any(word in filename_lower for word in ['case report', 'case']):
+        return 'Case Report'
+    elif any(word in filename_lower for word in ['amendment', 'amendment']):
+        return 'Protocol Amendment'
+    elif any(word in filename_lower for word in ['summary', 'synopsis']):
+        return 'Study Summary'
+    else:
+        return 'Clinical Document'
+
 @app.post("/upload-pdf-with-progress")
 async def upload_pdf_with_progress(file: UploadFile = File(...)):
     """Upload PDF with real-time progress tracking"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    # Check if file already exists in database
+    existing_docs = feedback_db.get_all_documents()
+    for doc in existing_docs:
+        if doc['filename'] == file.filename:
+            return {
+                "error": f"File '{file.filename}' has already been uploaded",
+                "status": "duplicate",
+                "message": "This document is already in the system. Please upload a different document or clear the database first."
+            }
     
     # Create a unique task ID for this upload
     task_id = str(uuid.uuid4())
@@ -246,187 +301,191 @@ async def upload_pdf_with_progress(file: UploadFile = File(...)):
         "created_at": time.time()
     }
     
-    try:
-        # Stage 1: File Upload (5%)
-        progress_store[task_id].update({
-            "stage": "uploading",
-            "progress": 5,
-            "message": f"Uploading {file.filename}..."
-        })
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
-        
-        # Stage 2: PDF Processing (15%)
-        progress_store[task_id].update({
-            "stage": "extracting",
-            "progress": 15,
-            "message": "Extracting text from PDF pages..."
-        })
-        
-        pages_data = load_pdf_with_pages(tmp_file_path)
-        
-        progress_store[task_id].update({
-            "progress": 25,
-            "message": f"Extracted text from {len(pages_data)} pages",
-            "details": {"pages_count": len(pages_data)}
-        })
-        
-        # Stage 3: Text Chunking (35%)
-        progress_store[task_id].update({
-            "stage": "chunking",
-            "progress": 35,
-            "message": "Creating text chunks with page metadata..."
-        })
-        
-        chunks = chunk_pages_with_metadata(pages_data)
-        
-        progress_store[task_id].update({
-            "progress": 45,
-            "message": f"Created {len(chunks)} text chunks",
-            "details": {
-                "pages_count": len(pages_data),
-                "chunks_count": len(chunks)
-            }
-        })
-        
-        # Stage 4: Database Preparation (50%)
-        progress_store[task_id].update({
-            "stage": "preparing",
-            "progress": 50,
-            "message": "Preparing vector database..."
-        })
-        
-        collection = get_collection()
-        
-        # Clear existing collection
-        try:
-            existing_data = collection.get()
-            if existing_data['ids']:
-                collection.delete(ids=existing_data['ids'])
-                progress_store[task_id].update({
-                    "progress": 55,
-                    "message": f"Cleared {len(existing_data['ids'])} existing documents"
-                })
-        except Exception as e:
-            print(f"Note: Could not clear existing collection: {e}")
-        
-        # Stage 5: Embedding Generation (60-95%)
-        progress_store[task_id].update({
-            "stage": "embedding",
-            "progress": 60,
-            "message": "Generating embeddings (this may take a few minutes)..."
-        })
-        
-        embedding_progress_start = 60
-        embedding_progress_range = 35  # 60% to 95%
-        
-        # Process embeddings with error handling
-        failed_chunks = []
-        for i, chunk in enumerate(chunks):
-            try:
-                # Calculate embedding progress
-                chunk_progress = (i / len(chunks)) * embedding_progress_range
-                current_progress = embedding_progress_start + chunk_progress
-                
-                # Update progress every 5 chunks or for the last chunk
-                if i % 5 == 0 or i == len(chunks) - 1:
-                    progress_store[task_id].update({
-                        "progress": int(current_progress),
-                        "message": f"Processing embeddings: {i+1}/{len(chunks)} chunks completed",
-                        "details": {
-                            "pages_count": len(pages_data),
-                            "chunks_count": len(chunks),
-                            "embedded_chunks": i + 1,
-                            "current_chunk_page": chunk["page_number"],
-                            "percentage_complete": f"{((i+1)/len(chunks)*100):.1f}%"
-                        }
-                    })
-                
-                try:
-                    embedding = get_embedding(chunk["text"], timeout=30, retries=2)
-                    collection.add(
-                        documents=[chunk["text"]],
-                        embeddings=[embedding],
-                        ids=[chunk["id"]],
-                        metadatas=[{
-                            "page_number": chunk["page_number"],
-                            "source": chunk["source"],
-                            "start_pos": chunk["start_pos"],
-                            "end_pos": chunk["end_pos"]
-                        }]
-                    )
-                except Exception as e:
-                    print(f"Failed to embed chunk {i}: {e}")
-                    failed_chunks.append(i)
-                    # Continue with next chunk instead of failing entire upload
-                    continue
-                    
-            except Exception as e:
-                print(f"Error processing chunk {i}: {e}")
-                failed_chunks.append(i)
-                continue
-        
-        # Log any failed chunks
-        if failed_chunks:
-            print(f"Warning: {len(failed_chunks)} chunks failed to embed: {failed_chunks}")
-        
-        # Stage 6: Completion (100%)
-        progress_store[task_id].update({
-            "stage": "completed",
-            "progress": 100,
-            "message": "PDF processing completed successfully!",
-            "details": {
-                "pages_count": len(pages_data),
-                "chunks_count": len(chunks),
-                "embedded_chunks": len(chunks) - len(failed_chunks),
-                "failed_chunks": len(failed_chunks),
-                "filename": file.filename
-            },
-            "completed": True
-        })
-        
-        # Clean up temp file
-        os.unlink(tmp_file_path)
-        
-        return {
-            "task_id": task_id,
-            "message": "PDF processing completed successfully",
-            "chunks_count": len(chunks),
-            "pages_count": len(pages_data),
-            "filename": file.filename,
-            "status": "completed"
-        }
+    # Read file content first
+    content = await file.read()
+    file_size = len(content)
     
-    except Exception as e:
-        print(f"Upload error: {e}")
-        # Clean up temp file if it exists
+    # Detect document category
+    category = detect_document_category(file.filename)
+    
+    # Run the actual processing in a background thread
+    def process_upload():
         try:
-            if 'tmp_file_path' in locals():
-                os.unlink(tmp_file_path)
-        except:
-            pass
-        
-        progress_store[task_id].update({
-            "stage": "failed",
-            "progress": 0,
-            "message": f"Error: {str(e)}",
-            "error": str(e),
-            "completed": True
-        })
-        
-        return {
-            "task_id": task_id,
-            "error": str(e),
-            "status": "failed"
-        }
-        return {
-            "task_id": task_id,
-            "error": str(e), 
-            "status": "failed"
-        }
+            # Stage 1: File Upload (5%)
+            progress_store[task_id].update({
+                "stage": "uploading",
+                "progress": 5,
+                "message": f"Uploading {file.filename}..."
+            })
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(content)
+                tmp_file_path = tmp_file.name
+            
+            # Stage 2: PDF Processing (15%)
+            progress_store[task_id].update({
+                "stage": "extracting",
+                "progress": 15,
+                "message": "Extracting text from PDF pages..."
+            })
+            
+            pages_data = load_pdf_with_pages(tmp_file_path)
+            
+            progress_store[task_id].update({
+                "progress": 25,
+                "message": f"Extracted text from {len(pages_data)} pages",
+                "details": {"pages_count": len(pages_data)}
+            })
+            
+            # Stage 3: Text Chunking (35%)
+            progress_store[task_id].update({
+                "stage": "chunking",
+                "progress": 35,
+                "message": "Creating text chunks with page metadata..."
+            })
+            
+            chunks = chunk_pages_with_metadata(pages_data)
+            
+            progress_store[task_id].update({
+                "progress": 45,
+                "message": f"Created {len(chunks)} text chunks",
+                "details": {
+                    "pages_count": len(pages_data),
+                    "chunks_count": len(chunks)
+                }
+            })
+            
+            # Stage 4: Database Preparation (50%)
+            progress_store[task_id].update({
+                "stage": "preparing",
+                "progress": 50,
+                "message": "Preparing vector database..."
+            })
+            
+            collection = get_collection()
+            
+            # Note: NOT clearing existing collection - adding to it for multi-document support
+            progress_store[task_id].update({
+                "progress": 55,
+                "message": "Ready to add new document chunks..."
+            })
+            
+            # Stage 5: Embedding Generation (60-95%)
+            progress_store[task_id].update({
+                "stage": "embedding",
+                "progress": 60,
+                "message": "Generating embeddings (this may take a few minutes)..."
+            })
+            
+            embedding_progress_start = 60
+            embedding_progress_range = 35  # 60% to 95%
+            
+            # Process embeddings with error handling
+            failed_chunks = []
+            for i, chunk in enumerate(chunks):
+                try:
+                    # Calculate embedding progress
+                    chunk_progress = (i / len(chunks)) * embedding_progress_range
+                    current_progress = embedding_progress_start + chunk_progress
+                    
+                    # Update progress every 5 chunks or for the last chunk
+                    if i % 5 == 0 or i == len(chunks) - 1:
+                        progress_store[task_id].update({
+                            "progress": int(current_progress),
+                            "message": f"Processing embeddings: {i+1}/{len(chunks)} chunks completed",
+                            "details": {
+                                "pages_count": len(pages_data),
+                                "chunks_count": len(chunks),
+                                "embedded_chunks": i + 1,
+                                "current_chunk_page": chunk["page_number"],
+                                "percentage_complete": f"{((i+1)/len(chunks)*100):.1f}%"
+                            }
+                        })
+                    
+                    try:
+                        embedding = get_embedding(chunk["text"], timeout=30, retries=2)
+                        collection.add(
+                            documents=[chunk["text"]],
+                            embeddings=[embedding],
+                            ids=[chunk["id"]],
+                            metadatas=[{
+                                "page_number": chunk["page_number"],
+                                "source": chunk["source"],
+                                "start_pos": chunk["start_pos"],
+                                "end_pos": chunk["end_pos"],
+                                "filename": file.filename
+                            }]
+                        )
+                    except Exception as e:
+                        print(f"Failed to embed chunk {i}: {e}")
+                        failed_chunks.append(i)
+                        # Continue with next chunk instead of failing entire upload
+                        continue
+                        
+                except Exception as e:
+                    print(f"Error processing chunk {i}: {e}")
+                    failed_chunks.append(i)
+                    continue
+            
+            # Log any failed chunks
+            if failed_chunks:
+                print(f"Warning: {len(failed_chunks)} chunks failed to embed: {failed_chunks}")
+            
+            # Stage 6: Completion (100%)
+            progress_store[task_id].update({
+                "stage": "completed",
+                "progress": 100,
+                "message": "PDF processing completed successfully!",
+                "details": {
+                    "pages_count": len(pages_data),
+                    "chunks_count": len(chunks),
+                    "embedded_chunks": len(chunks) - len(failed_chunks),
+                    "failed_chunks": len(failed_chunks),
+                    "filename": file.filename,
+                    "category": category
+                },
+                "completed": True
+            })
+            
+            # Record document in database
+            feedback_db.record_document(
+                filename=file.filename,
+                category=category,
+                pages_count=len(pages_data),
+                chunks_count=len(chunks),
+                file_size=file_size
+            )
+            
+            # Clean up temp file
+            os.unlink(tmp_file_path)
+            
+        except Exception as e:
+            print(f"Upload error: {e}")
+            # Clean up temp file if it exists
+            try:
+                if 'tmp_file_path' in locals():
+                    os.unlink(tmp_file_path)
+            except:
+                pass
+            
+            progress_store[task_id].update({
+                "stage": "failed",
+                "progress": 0,
+                "message": f"Error: {str(e)}",
+                "error": str(e),
+                "completed": True
+            })
+    
+    # Start processing in background thread
+    thread = threading.Thread(target=process_upload, daemon=True)
+    thread.start()
+    
+    # Return immediately with task_id
+    return {
+        "task_id": task_id,
+        "message": "Upload started, processing in background",
+        "status": "processing"
+    }
 
 @app.get("/upload-progress/{task_id}")
 def get_upload_progress(task_id: str):
@@ -436,6 +495,81 @@ def get_upload_progress(task_id: str):
     
     return progress_store[task_id]
 
+@app.get("/uploaded-documents")
+def get_uploaded_documents():
+    """Get list of all uploaded documents in current session"""
+    try:
+        documents = feedback_db.get_all_documents()
+        return {
+            "documents": documents,
+            "count": len(documents),
+            "status": "success"
+        }
+    except Exception as e:
+        print(f"Error fetching documents: {e}")
+        return {
+            "documents": [],
+            "count": 0,
+            "error": str(e),
+            "status": "failed"
+        }
+
+@app.post("/clear-database")
+def clear_database():
+    """Clear all documents and chunks from vector database"""
+    try:
+        collection = get_collection()
+        existing_data = collection.get()
+        
+        chunks_cleared = 0
+        if existing_data['ids']:
+            collection.delete(ids=existing_data['ids'])
+            chunks_cleared = len(existing_data['ids'])
+            print(f"Cleared {chunks_cleared} chunks from database")
+        
+        # Also clear embedding cache
+        clear_embedding_cache()
+        
+        # Clear document records from feedback database
+        docs_cleared = feedback_db.clear_all_documents()
+        print(f"Cleared {docs_cleared} document records from database")
+        
+        return {
+            "status": "success",
+            "message": f"Cleared {chunks_cleared} chunks and {docs_cleared} document records",
+            "chunks_cleared": chunks_cleared,
+            "documents_cleared": docs_cleared
+        }
+    except Exception as e:
+        print(f"Error clearing database: {e}")
+        return {
+            "status": "failed",
+            "error": str(e)
+        }
+
+@app.get("/database-status")
+def get_database_status():
+    """Get current database status"""
+    try:
+        collection = get_collection()
+        chunk_count = collection.count()
+        
+        # Get all documents
+        documents = feedback_db.get_all_documents()
+        
+        return {
+            "status": "success",
+            "chunks_count": chunk_count,
+            "documents_count": len(documents),
+            "documents": documents
+        }
+    except Exception as e:
+        print(f"Error getting database status: {e}")
+        return {
+            "status": "failed",
+            "error": str(e)
+        }
+
 @app.get("/warm-up-model")
 def warm_up_model_endpoint():
     """Manually warm up the LLM model"""
@@ -444,6 +578,21 @@ def warm_up_model_endpoint():
         return {
             "success": success,
             "message": "Model warmed up successfully" if success else "Model warm-up failed"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/test-llm")
+def test_llm_endpoint():
+    """Test if LLM is working"""
+    try:
+        from llm_client import ask_llm
+        test_prompt = "Write a one-sentence summary of what a clinical trial is."
+        response = ask_llm(test_prompt, timeout=30)
+        return {
+            "success": response != "TIMEOUT_ERROR",
+            "response": response,
+            "is_timeout": response == "TIMEOUT_ERROR"
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -630,6 +779,58 @@ def extract_page_numbers(content: str) -> list:
     pages = re.findall(r'Page (\d+)', content)
     return [f"Page {page}" for page in set(pages)]
 
+def generate_llm_summary(approved_sections):
+    """Generate an executive summary using the LLM based on approved sections"""
+    from llm_client import ask_llm
+    
+    # Build a comprehensive prompt from the approved sections
+    sections_text = ""
+    for section in approved_sections:
+        sections_text += f"\n## {section['title']}\n"
+        sections_text += f"{section['content']}\n"
+    
+    # Create a prompt for the LLM to generate a professional executive summary
+    prompt = f"""Based on the following clinical protocol sections, generate a professional executive summary that:
+1. Synthesizes the key information from all sections
+2. Maintains a formal, clinical tone
+3. Highlights the most important aspects for stakeholders
+4. Is well-organized with clear sections
+5. Is approximately 800-1000 words
+
+Clinical Protocol Sections:
+{sections_text}
+
+Please generate a comprehensive executive summary:"""
+    
+    try:
+        print("Calling LLM to generate summary...")
+        print(f"Prompt length: {len(prompt)} characters")
+        summary_response = ask_llm(prompt, timeout=180)
+        
+        print(f"LLM response received: {len(summary_response) if summary_response else 0} characters")
+        print(f"Response preview: {summary_response[:100] if summary_response else 'None'}")
+        
+        if summary_response and summary_response.strip() and summary_response != "TIMEOUT_ERROR":
+            # Format the summary with a header
+            formatted_summary = "# CLINICAL PROTOCOL EXECUTIVE SUMMARY\n\n"
+            formatted_summary += summary_response.strip()
+            formatted_summary += f"\n\n---\n*This executive summary was generated using AI analysis of the clinical protocol document.*\n"
+            formatted_summary += f"*Generated on {time.strftime('%B %d, %Y at %H:%M')}*"
+            
+            print("✅ LLM summary generated successfully")
+            return formatted_summary
+        else:
+            print(f"⚠️ LLM returned invalid response: {summary_response}")
+            print("Using fallback summary from approved sections")
+            return create_basic_fallback_summary(approved_sections)
+            
+    except Exception as e:
+        print(f"❌ Error calling LLM for summary: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Using fallback summary from approved sections")
+        return create_basic_fallback_summary(approved_sections)
+
 @app.post("/review-sections")
 def review_sections(request: ReviewRequest):
     """Submit human review of extracted sections and generate executive summary"""
@@ -643,14 +844,14 @@ def review_sections(request: ReviewRequest):
         if approved_sections:
             print(f"Generating professional summary from {len(approved_sections)} approved sections...")
             
-            # Use the structured professional summary approach
+            # Use the LLM to generate a comprehensive summary from approved sections
             try:
-                print("Generating structured professional summary...")
-                final_summary = create_structured_professional_summary()
-                print("Professional summary generated successfully")
+                print("Generating LLM-based executive summary...")
+                final_summary = generate_llm_summary(approved_sections)
+                print("LLM summary generated successfully")
                     
             except Exception as e:
-                print(f"Professional summary error: {e}, using basic fallback...")
+                print(f"LLM summary error: {e}, using basic fallback...")
                 final_summary = create_basic_fallback_summary(approved_sections)
             
             return {
@@ -1021,6 +1222,65 @@ def get_recent_feedback(limit: int = 20):
             "success": True,
             "feedback": feedback_list,
             "count": len(feedback_list)
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.post("/summary-approval")
+def submit_summary_approval(request: SummaryApprovalRequest):
+    """Submit approval or disapproval of generated summary"""
+    try:
+        approval_id = feedback_db.record_summary_approval(
+            summary_id=request.summary_id,
+            status=request.status,
+            reason=request.reason,
+            user_session=request.user_session,
+            summary_content=request.summary_content,
+            approved_sections_count=request.approved_sections_count
+        )
+        
+        return {
+            "success": True,
+            "approval_id": approval_id,
+            "message": f"Summary {request.status} recorded successfully",
+            "status": request.status,
+            "reason": request.reason
+        }
+    except Exception as e:
+        print(f"Error recording summary approval: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/summary-approvals")
+def get_summary_approvals(limit: int = 50):
+    """Get recent summary approvals/disapprovals"""
+    try:
+        approvals = feedback_db.get_summary_approvals(limit)
+        return {
+            "success": True,
+            "approvals": approvals,
+            "count": len(approvals)
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.get("/documents")
+def get_documents(limit: int = 50):
+    """Get recent uploaded documents"""
+    try:
+        documents = feedback_db.get_documents(limit)
+        return {
+            "success": True,
+            "documents": documents,
+            "count": len(documents)
         }
     except Exception as e:
         return {

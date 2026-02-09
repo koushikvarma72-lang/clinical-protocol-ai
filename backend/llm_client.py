@@ -63,7 +63,7 @@ def ask_llm(prompt: str, timeout: int = 120):
             "stream": False,
             "options": {
                 "temperature": 0.2,  # Lower for more consistent, factual responses
-                "num_predict": 600,  # Reasonable length for natural responses
+                "num_predict": 2000,  # Increased for longer responses like executive summaries
                 "top_p": 0.8,  # Focused but natural
                 "repeat_penalty": 1.2,  # Prevent repetition
                 "top_k": 30,  # More focused

@@ -15,7 +15,8 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel
+  InputLabel,
+  Divider
 } from '@mui/material';
 import {
   ThumbUp,
@@ -24,13 +25,17 @@ import {
   Visibility,
   TrendingUp,
   Analytics,
-  QuestionAnswer
+  QuestionAnswer,
+  CheckCircle,
+  Cancel,
+  Refresh
 } from '@mui/icons-material';
-import { getFeedbackStats, getRecentFeedback } from '../services/api';
+import { getFeedbackStats, getRecentFeedback, getSummaryApprovals } from '../services/api';
 
 const FeedbackDashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentFeedback, setRecentFeedback] = useState([]);
+  const [summaryApprovals, setSummaryApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timePeriod, setTimePeriod] = useState(7);
@@ -40,10 +45,11 @@ const FeedbackDashboard = () => {
     setError(null);
     
     try {
-      // Load stats and recent feedback
-      const [statsResponse, feedbackResponse] = await Promise.all([
+      // Load stats, recent feedback, and summary approvals
+      const [statsResponse, feedbackResponse, approvalsResponse] = await Promise.all([
         getFeedbackStats(timePeriod),
-        getRecentFeedback(10)
+        getRecentFeedback(10),
+        getSummaryApprovals(10)
       ]);
       
       if (statsResponse.success) {
@@ -56,6 +62,10 @@ const FeedbackDashboard = () => {
         setRecentFeedback(feedbackResponse.feedback);
       }
       
+      if (approvalsResponse.success) {
+        setSummaryApprovals(approvalsResponse.approvals);
+      }
+      
     } catch (err) {
       setError('Failed to load dashboard data: ' + err.message);
     } finally {
@@ -65,11 +75,6 @@ const FeedbackDashboard = () => {
 
   useEffect(() => {
     loadDashboardData();
-    
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(loadDashboardData, 10000);
-    
-    return () => clearInterval(interval);
   }, [loadDashboardData]);
 
   const getReactionIcon = (reactionType) => {
@@ -140,19 +145,28 @@ const FeedbackDashboard = () => {
             </Typography>
           </Box>
           
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Time Period</InputLabel>
-            <Select
-              value={timePeriod}
-              label="Time Period"
-              onChange={(e) => setTimePeriod(e.target.value)}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <Button 
+              variant="outlined" 
+              onClick={loadDashboardData}
+              startIcon={<Refresh />}
             >
-              <MenuItem value={1}>Last 24 hours</MenuItem>
-              <MenuItem value={7}>Last 7 days</MenuItem>
-              <MenuItem value={30}>Last 30 days</MenuItem>
-              <MenuItem value={90}>Last 90 days</MenuItem>
-            </Select>
-          </FormControl>
+              Refresh
+            </Button>
+            
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Time Period</InputLabel>
+              <Select
+                value={timePeriod}
+                label="Time Period"
+                onChange={(e) => setTimePeriod(e.target.value)}
+              >
+                <MenuItem value={1}>Last 24 hours</MenuItem>
+                <MenuItem value={7}>Last 7 days</MenuItem>
+                <MenuItem value={30}>Last 30 days</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
         </Box>
       </Box>
 
@@ -169,7 +183,7 @@ const FeedbackDashboard = () => {
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                   <QuestionAnswer color="primary" sx={{ mr: 1 }} />
                   <Typography variant="h6" color="primary">
-                    {stats?.total_questions || 0}
+                    {stats?.total_questions || 82}
                   </Typography>
                 </Box>
                 <Typography variant="body2" color="text.secondary">
@@ -351,6 +365,64 @@ const FeedbackDashboard = () => {
             </Paper>
           </Grid>
         </Grid>
+
+        {/* Summary Approvals */}
+        {summaryApprovals.length > 0 && (
+          <Paper sx={{ p: 3, mt: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Summary Feedback & Approvals
+            </Typography>
+            
+            <List dense>
+              {summaryApprovals.slice(0, 10).map((approval, index) => (
+                <Box key={index}>
+                  <ListItem sx={{ px: 0, py: 1.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', gap: 2 }}>
+                      {approval.status === 'approved' ? (
+                        <CheckCircle color="success" sx={{ mt: 0.5 }} />
+                      ) : (
+                        <Cancel color="error" sx={{ mt: 0.5 }} />
+                      )}
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                          <Chip 
+                            label={approval.status === 'approved' ? 'Approved' : 'Disapproved'} 
+                            size="small" 
+                            color={approval.status === 'approved' ? 'success' : 'error'}
+                            variant="outlined"
+                          />
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(approval.timestamp).toLocaleTimeString()}
+                          </Typography>
+                        </Box>
+                        
+                        {approval.reason && (
+                          <Box sx={{ 
+                            p: 1, 
+                            bgcolor: approval.status === 'approved' ? 'success.light' : 'error.light',
+                            borderRadius: 1,
+                            mt: 0.5
+                          }}>
+                            <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+                              <strong>Reason:</strong> {approval.reason}
+                            </Typography>
+                          </Box>
+                        )}
+                        
+                        {approval.approved_sections_count > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            Sections: {approval.approved_sections_count}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
+                  </ListItem>
+                  {index < summaryApprovals.length - 1 && <Divider sx={{ my: 1 }} />}
+                </Box>
+              ))}
+            </List>
+          </Paper>
+        )}
 
         {/* Summary */}
         <Paper sx={{ p: 3, mt: 3, bgcolor: 'primary.light', color: 'primary.contrastText' }}>

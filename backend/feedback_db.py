@@ -64,6 +64,35 @@ class FeedbackDB:
             )
         ''')
         
+        # Create summary approvals table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS summary_approvals (
+                id TEXT PRIMARY KEY,
+                summary_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_session TEXT,
+                summary_content TEXT,
+                approved_sections_count INTEGER
+            )
+        ''')
+        
+        # Create documents table to track uploaded documents
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                category TEXT,
+                pages_count INTEGER,
+                chunks_count INTEGER,
+                file_size INTEGER,
+                upload_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_session TEXT,
+                status TEXT DEFAULT 'completed'
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         print("Feedback database initialized successfully")
@@ -255,6 +284,179 @@ class FeedbackDB:
         
         conn.commit()
         conn.close()
+    
+    def record_summary_approval(self,
+                               summary_id: str,
+                               status: str,
+                               reason: str = None,
+                               user_session: str = None,
+                               summary_content: str = None,
+                               approved_sections_count: int = 0) -> str:
+        """Record summary approval or disapproval with reason"""
+        
+        approval_id = str(uuid.uuid4())
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO summary_approvals (
+                id, summary_id, status, reason, user_session, 
+                summary_content, approved_sections_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            approval_id,
+            summary_id,
+            status,
+            reason,
+            user_session or str(uuid.uuid4()),
+            summary_content,
+            approved_sections_count
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return approval_id
+    
+    def get_summary_approvals(self, limit: int = 50) -> List[Dict]:
+        """Get recent summary approvals/disapprovals"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, summary_id, status, reason, timestamp, 
+                   approved_sections_count
+            FROM summary_approvals 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        ''', (limit,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        approvals_list = []
+        for row in results:
+            approvals_list.append({
+                'id': row[0],
+                'summary_id': row[1],
+                'status': row[2],
+                'reason': row[3],
+                'timestamp': row[4],
+                'approved_sections_count': row[5]
+            })
+        
+        return approvals_list
+    
+    def record_document(self,
+                       filename: str,
+                       category: str = None,
+                       pages_count: int = 0,
+                       chunks_count: int = 0,
+                       file_size: int = 0,
+                       user_session: str = None) -> str:
+        """Record uploaded document"""
+        
+        doc_id = str(uuid.uuid4())
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO documents (
+                id, filename, category, pages_count, chunks_count, 
+                file_size, user_session, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            doc_id,
+            filename,
+            category,
+            pages_count,
+            chunks_count,
+            file_size,
+            user_session or str(uuid.uuid4()),
+            'completed'
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        return doc_id
+    
+    def get_documents(self, limit: int = 50) -> List[Dict]:
+        """Get recent uploaded documents"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, filename, category, pages_count, chunks_count, 
+                   file_size, upload_timestamp, status
+            FROM documents 
+            ORDER BY upload_timestamp DESC 
+            LIMIT ?
+        ''', (limit,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        documents_list = []
+        for row in results:
+            documents_list.append({
+                'id': row[0],
+                'filename': row[1],
+                'category': row[2],
+                'pages_count': row[3],
+                'chunks_count': row[4],
+                'file_size': row[5],
+                'upload_timestamp': row[6],
+                'status': row[7]
+            })
+        
+        return documents_list
+    
+    def get_all_documents(self) -> List[Dict]:
+        """Get all uploaded documents in current session"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, filename, category, pages_count, chunks_count, 
+                   file_size, upload_timestamp, status
+            FROM documents 
+            ORDER BY upload_timestamp DESC
+        ''')
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        documents_list = []
+        for row in results:
+            documents_list.append({
+                'id': row[0],
+                'filename': row[1],
+                'category': row[2],
+                'pages_count': row[3],
+                'chunks_count': row[4],
+                'file_size': row[5],
+                'upload_timestamp': row[6],
+                'status': row[7]
+            })
+        
+        return documents_list
+    
+    def clear_all_documents(self) -> int:
+        """Clear all document records from database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM documents')
+        count = cursor.fetchone()[0]
+        
+        cursor.execute('DELETE FROM documents')
+        conn.commit()
+        conn.close()
+        
+        return count
 
 # Global feedback database instance
 feedback_db = FeedbackDB()
